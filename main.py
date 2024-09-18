@@ -35,6 +35,9 @@ class Narudzba(BaseModel):
     dan: str
     vreme: str
 
+class EmailMenze(BaseModel):
+    email: str
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -122,7 +125,7 @@ def preuzmi_pdf():
         logger.warning('Nema PDF dokumenata koji odgovaraju uslovima.')
     
 @app.post("/posalji")
-def posalji_narudzbu(narudzbe: List[Narudzba]):
+def posalji_narudzbu(narudzbe: List[Narudzba], email: EmailMenze):
     workbook = load_workbook("exceldokument.xlsx")
     sheet = workbook.active
     brojac = 11
@@ -146,10 +149,10 @@ def posalji_narudzbu(narudzbe: List[Narudzba]):
             # Multipart Encoder za slanje podataka i fajla
             m = MultipartEncoder(
                 fields={
-                    'name': 'Rezervacija kuvanog obroka',
+                    'name': 'Kancelarija razvoja aplikacija',
                     'from': 'antgroup@hbisserbia.rs',
-                    'to': 'trpezarijakapitalna@hbisserbia.rs',  # Koristimo string, a ne listu
-                    'subject': 'Rezervacija',
+                    'to': email.email,  # Koristimo string, a ne listu
+                    'subject': 'Rezervacija kuvanih obroka',
                     'body': 'Fajl je u prilogu maila',
                     'attachment': ('RezervacijaToplogObroka.xlsx', attachment_file, 
                                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')  # Tuple sa 3 elementa
