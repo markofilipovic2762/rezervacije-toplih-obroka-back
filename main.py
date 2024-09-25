@@ -14,8 +14,59 @@ from typing import List
 from requests_toolbelt.multipart.encoder import MultipartEncoder
 import logging
 from logging.handlers import TimedRotatingFileHandler
+import asyncpg
+from fastapi import HTTPException,Response
 
 app = FastAPI()
+
+DATABASE_URL = "postgresql://postgres:postgres@10.21.59.29:5432/postgres"
+
+class Narudzba(BaseModel):
+    ime: str
+    mbr: int
+    jelo: str
+    dan: str
+    vreme: str
+
+async def get_db_connection():
+    conn = await asyncpg.connect(DATABASE_URL)
+    await conn.execute('SET search_path TO menza')
+    return conn
+
+async def create_narudzbe(narudzbe: List[Narudzba]):
+    conn = await get_db_connection()
+    
+    print("Narudzbe objekat: ",narudzbe[0])
+    print("Narudzba ime:", narudzbe[0].ime)
+
+    # Kreiramo transakciju
+    try:
+        async with conn.transaction():  # Otvaranje transakcije
+            try:
+                # Iteracija kroz listu narudžbi
+                for narudzba in narudzbe:
+                    await conn.execute('''
+                        INSERT INTO narudzbe (ime, mbr, jelo, dan, vreme) 
+                        VALUES ($1, $2, $3, $4, $5)
+                    ''', narudzba.ime, narudzba.mbr, narudzba.jelo, narudzba.dan, narudzba.vreme)
+                logger.info(f"Uspesno dodato {len(narudzbe)} rezervacija u bazu")
+            except Exception as e:
+                logger.error(f"Greška prilikom unosa u bazu: {str(e)}")
+                # U slučaju greške u transakciji
+                raise HTTPException(status_code=500, detail=f"Greška prilikom unosa: {str(e)}")
+    finally:
+        # Zatvaranje konekcije izvan transakcije
+        await conn.close()
+
+    return {"status": f"Uspešno dodato {len(narudzbe)} narudzbi"}
+@app.get("/narudzbe")
+async def get_narudzbe():
+    conn = await get_db_connection()
+    try:
+        narudzbe = await conn.fetch('SELECT * FROM narudzbe')
+        return narudzbe
+    finally:
+        await conn.close()
 
 #Podesavanje logera
 logger = logging.getLogger("MyLogger")
@@ -28,12 +79,7 @@ logger.addHandler(handler)
 logging.getLogger("watchdog").setLevel(logging.WARNING)
 logging.getLogger("uvicorn").setLevel(logging.WARNING)
 
-class Narudzba(BaseModel):
-    ime: str
-    mbr: int
-    jelo: str
-    dan: str
-    vreme: str
+
 
 class EmailMenze(BaseModel):
     email: str
@@ -71,9 +117,9 @@ def start_scheduler():
     scheduler = BackgroundScheduler()
     print("Scheduler je pokrenut")
     logger.info("Scheduler je pokrenut")
-    scheduler.add_job(preuzmi_pdf, 'cron', day_of_week='thu', hour=9, minute=0)
-    scheduler.add_job(uzmi_jela, 'cron', day_of_week='thu', hour=9, minute=1)
-    scheduler.add_job(delete_pdf, 'cron', day_of_week='thu', hour=9, minute=2)
+    scheduler.add_job(preuzmi_pdf, 'cron', day_of_week='thu', hour=11, minute=47)
+    scheduler.add_job(uzmi_jela, 'cron', day_of_week='thu', hour=11, minute=48)
+    scheduler.add_job(delete_pdf, 'cron', day_of_week='thu', hour=11, minute=49)
     scheduler.start()
 
 @app.on_event("startup")
@@ -125,7 +171,9 @@ def preuzmi_pdf():
         logger.warning('Nema PDF dokumenata koji odgovaraju uslovima.')
     
 @app.post("/posalji")
-def posalji_narudzbu(narudzbe: List[Narudzba], email: EmailMenze):
+async def posalji_narudzbu(narudzbe: List[Narudzba], email: EmailMenze):    
+    await create_narudzbe(narudzbe) #upis u bazu
+        
     workbook = load_workbook("exceldokument.xlsx")
     sheet = workbook.active
     brojac = 11
@@ -151,7 +199,7 @@ def posalji_narudzbu(narudzbe: List[Narudzba], email: EmailMenze):
                 fields={
                     'name': 'Kancelarija razvoja aplikacija',
                     'from': 'antgroup@hbisserbia.rs',
-                    'to': email.email,  # Koristimo string, a ne listu
+                    'to': email.email,  #test: 'mfilipovic@hbisserbia.rs'  Koristimo string, a ne listu
                     'subject': 'Rezervacija kuvanih obroka',
                     'body': 'Fajl je u prilogu maila',
                     'attachment': ('RezervacijaToplogObroka.xlsx', attachment_file, 
@@ -166,13 +214,13 @@ def posalji_narudzbu(narudzbe: List[Narudzba], email: EmailMenze):
             if response.status_code == 200:
                 print("Uspesno poslata rezervacija")
                 logger.info("Uspesno poslata rezervacija")
+                return Response(status_code=200,content="Uspesno poslata rezervacija")
             else:
                 print(response.status_code, response.text)
-                logger.info(response.status_code, response.text)
+                logger.error(response.status_code, response.text)
                 
     except FileNotFoundError:
-        print("Fajl nije pronađen")
-        logger.warning("Fajl nije pronađen")
+        logger.error("Fajl nije pronađen")
         
     finally:
         # Zatvaranje fajla
