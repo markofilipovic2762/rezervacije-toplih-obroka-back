@@ -4,3 +4,5 @@ __pycache__
 Logger*
 topli_obroci.json
 Dockerfile
+.env
+.vscode/settings.json
